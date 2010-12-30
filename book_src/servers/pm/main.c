@@ -162,6 +162,7 @@ PRIVATE void pm_init()
   struct memory mem_chunks[NR_MEMS];
 
   /* Initialize process table, including timers. */
+  /* timer 和 tmr_inittimer 定义在/include/timers.h中定义 */
   for (rmp=&mproc[0]; rmp<&mproc[NR_PROCS]; rmp++) {
 	tmr_inittimer(&rmp->mp_timer);
   }
@@ -169,7 +170,7 @@ PRIVATE void pm_init()
   /* Build the set of signals which cause core dumps, and the set of signals
    * that are by default ignored.
    */
-  sigemptyset(&core_sset);
+  sigemptyset(&core_sset);	/* 先置位 */
   for (sig_ptr = core_sigs; sig_ptr < core_sigs+sizeof(core_sigs); sig_ptr++)
 	sigaddset(&core_sset, *sig_ptr);
   sigemptyset(&ign_sset);
@@ -187,9 +188,9 @@ PRIVATE void pm_init()
       panic(__FILE__,"get kernel info failed",s);
 
   /* Get the memory map of the kernel to see how much memory it uses. */
-  if ((s=get_mem_map(SYSTASK, mem_map)) != OK) /* 得到SYSTEM的内存映射(为什么是kernal),SYSTASK = SYSTEM = 2 */
+  if ((s=get_mem_map(SYSTASK, mem_map)) != OK)
   	panic(__FILE__,"couldn't get memory map of SYSTASK",s);
-  minix_clicks = (mem_map[S].mem_phys+mem_map[S].mem_len)-mem_map[T].mem_phys; /* SYSTEM 进程用的内存块数 */
+  minix_clicks = (mem_map[S].mem_phys+mem_map[S].mem_len)-mem_map[T].mem_phys;
   patch_mem_chunks(mem_chunks, mem_map);
 
   /* Initialize PM's process table. Request a copy of the system image table 
@@ -200,25 +201,25 @@ PRIVATE void pm_init()
   procs_in_use = 0;				/* start populating table */
   printf("Building process table:");		/* show what's happening */
   for (ip = &image[0]; ip < &image[NR_BOOT_PROCS]; ip++) {		
-  	if (ip->proc_nr >= 0) {			/* task have negative nrs(不考虑内核) */
+  	if (ip->proc_nr >= 0) {			/* task have negative nrs */
   		procs_in_use += 1;		/* found user process */
 
 		/* Set process details found in the image table. */
 		rmp = &mproc[ip->proc_nr];	
   		strncpy(rmp->mp_name, ip->proc_name, PROC_NAME_LEN); 
-		rmp->mp_parent = RS_PROC_NR;
+		rmp->mp_parent = RS_PROC_NR;   /* 再生服务器 */
 		rmp->mp_nice = get_nice_value(ip->priority);
-		if (ip->proc_nr == INIT_PROC_NR) {	/* user process(INIT是当中唯一的用户进程) */
-  			rmp->mp_pid = INIT_PID;		/* INIT_PID = 1 */
+		if (ip->proc_nr == INIT_PROC_NR) {	/* user process */
+  			rmp->mp_pid = INIT_PID;
 			rmp->mp_flags |= IN_USE; 
   		        sigemptyset(&rmp->mp_ignore);	
 		}
-		else {					/* system process(其它的都是系统进程) */
+		else {					/* system process */
   			rmp->mp_pid = get_free_pid();
 			rmp->mp_flags |= IN_USE | DONT_SWAP | PRIV_PROC; 
-  			sigfillset(&rmp->mp_ignore); /* 初始化,置1 */
+  			sigfillset(&rmp->mp_ignore);	
 		}
-  		sigemptyset(&rmp->mp_sigmask); /* 初始化,置0 */
+  		sigemptyset(&rmp->mp_sigmask);
   		sigemptyset(&rmp->mp_catch);
   		sigemptyset(&rmp->mp_sig2mess);
 
@@ -241,8 +242,8 @@ PRIVATE void pm_init()
   printf(".\n");				/* last process done */
 
   /* Override some details. PM is somewhat special. */
-  mproc[PM_PROC_NR].mp_pid = PM_PID;		/* magically override pid PM_PID = 0 */
-  mproc[PM_PROC_NR].mp_parent = PM_PROC_NR;	/* PM doesn't have parent PM_PROC_NR = 0*/
+  mproc[PM_PROC_NR].mp_pid = PM_PID;		/* magically override pid */
+  mproc[PM_PROC_NR].mp_parent = PM_PROC_NR;	/* PM doesn't have parent */
 
   /* Tell FS that no more system processes follow and synchronize. */
   mess.PR_PROC_NR = NONE;
@@ -310,7 +311,7 @@ struct memory *mem_chunks;			/* store mem chunks here */
 	if (*s != 0) {			/* get fresh data, unless at end */	
 
 	    /* Read fresh base and expect colon as next char. */ 
-	    base = strtoul(s, &end, 0x10);		/* get number */
+	    base = strtoul(s, &end, 0x10);		/* get number(得到的是16进制的) */
 	    if (end != s && *end == ':') s = ++end;	/* skip ':' */ 
 	    else *s=0;			/* terminate, should not happen */
 
@@ -320,9 +321,10 @@ struct memory *mem_chunks;			/* store mem chunks here */
 	    else done = 1;
 	}
 	limit = base + size;	
-	base = (base + CLICK_SIZE-1) & ~(long)(CLICK_SIZE-1); /* 移动到下个块的边界上去 */
-	limit &= ~(long)(CLICK_SIZE-1);			      /* 移动limit到所在块的边界 */
-	if (limit <= base) continue;			      /* 这个free的内存块大小在CLICK_SHIFT这内,太小忽略 */
+	/* 找到以base开始的下个CLICK_SIZE边界,下面的运算在CLICK_SIZE为偶数时才成立 */
+	base = (base + CLICK_SIZE-1) & ~(long)(CLICK_SIZE-1); 
+	limit &= ~(long)(CLICK_SIZE-1);
+	if (limit <= base) continue;
 	memp->base = base >> CLICK_SHIFT;
 	memp->size = (limit - base) >> CLICK_SHIFT;
   }
@@ -343,7 +345,7 @@ struct mem_map *map_ptr;			/* memory to remove */
  */
   struct memory *memp;
   for (memp = mem_chunks; memp < &mem_chunks[NR_MEMS]; memp++) {
-	if (memp->base == map_ptr[T].mem_phys) { /* 对于内存的分配是依次进行的，所以这么判断 */
+	if (memp->base == map_ptr[T].mem_phys) {
 		memp->base += map_ptr[T].mem_len + map_ptr[D].mem_len;
 		memp->size -= map_ptr[T].mem_len + map_ptr[D].mem_len;
 	}

@@ -135,7 +135,7 @@ register message *m_ptr;	/* pointer to request message */
   /* Try to make the actual copy for the requested data. */
   if (m_ptr->I_VAL_LEN > 0 && length > m_ptr->I_VAL_LEN) return (E2BIG);
   proc_nr = m_ptr->m_source;		/* only caller can request copy */
-  dst_phys = numap_local(proc_nr, (vir_bytes) m_ptr->I_VAL_PTR, length); 
+  dst_phys = numap_local(proc_nr, (vir_bytes) m_ptr->I_VAL_PTR, length); /* 得到物理地址 */
   if (src_phys == 0 || dst_phys == 0) return(EFAULT);
   phys_copy(src_phys, dst_phys, length);
   return(OK);

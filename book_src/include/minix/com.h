@@ -55,11 +55,11 @@
  */
 #define NOTIFY_MESSAGE		  0x1000
 #define NOTIFY_FROM(p_nr)	 (NOTIFY_MESSAGE | ((p_nr) + NR_TASKS)) 
-#  define SYN_ALARM	NOTIFY_FROM(CLOCK) 	/* synchronous alarm */
-#  define SYS_SIG	NOTIFY_FROM(SYSTEM) 	/* system signal */
-#  define HARD_INT	NOTIFY_FROM(HARDWARE) 	/* hardware interrupt */
-#  define NEW_KSIG	NOTIFY_FROM(HARDWARE)  	/* new kernel signal */
-#  define FKEY_PRESSED	NOTIFY_FROM(TTY_PROC_NR)/* function key press */
+#define SYN_ALARM	NOTIFY_FROM(CLOCK) 	/* synchronous alarm */
+#define SYS_SIG	        NOTIFY_FROM(SYSTEM) 	/* system signal */
+#define HARD_INT	NOTIFY_FROM(HARDWARE) 	/* hardware interrupt */
+#define NEW_KSIG	NOTIFY_FROM(HARDWARE)  	/* new kernel signal */
+#define FKEY_PRESSED	NOTIFY_FROM(TTY_PROC_NR)/* function key press */
 
 /* Shorthands for message parameters passed with notifications. */
 #define NOTIFY_SOURCE		m_source

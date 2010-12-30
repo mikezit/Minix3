@@ -52,7 +52,7 @@ PUBLIC pid_t get_free_pid()
 }
 
 /*===========================================================================*
- *				allowed	(查看文件是否［可读,可写,可执行］)	     *
+ *				allowed					     *
  *===========================================================================*/
 PUBLIC int allowed(name_buf, s_buf, mask)
 char *name_buf;			/* pointer to file name to be EXECed */
@@ -80,7 +80,7 @@ int mask;			/* R_BIT, W_BIT, or X_BIT */
   save_errno = errno;		/* open might fail, e.g. from ENFILE */
   tell_fs(SETUID, PM_PROC_NR, (int) mp->mp_effuid, (int) mp->mp_effuid);
   if (fd < 0) return(-save_errno);
-  if (fstat(fd, s_buf) < 0) panic(__FILE__,"allowed: fstat failed", NO_NUM); /* fstat()函数函数的作用是：返回已打开的文件信息stat结构 */
+  if (fstat(fd, s_buf) < 0) panic(__FILE__,"allowed: fstat failed", NO_NUM);
 
   /* Only regular files can be executed. */
   if (mask == X_BIT && (s_buf->st_mode & I_TYPE) != I_REGULAR) {
@@ -153,8 +153,7 @@ const char *name;
   register const char *namep;
   register char *envp;
 
-  /* 在字符的比较当中,0,NULL,'\0'都是一样的 */
-  for (envp = (char *) monitor_params; *envp != 0;) {
+  for (envp = (char *) monitor_params; *envp != 0;) { /* *envp是个char,而0和'\0'是相等的 */
 	for (namep = name; *namep != 0 && *namep == *envp; namep++, envp++)
 		;
 	if (*namep == '\0' && *envp == '=') 

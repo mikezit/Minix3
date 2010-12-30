@@ -28,7 +28,7 @@ register message *m_ptr;	/* pointer to request message */
   rp = proc_addr(m_ptr->PR_PROC_NR);
   sp = (reg_t) m_ptr->PR_STACK_PTR;
   rp->p_reg.sp = sp;		/* set the stack pointer */
-  phys_memset(vir2phys(&rp->p_ldt[EXTRA_LDT_INDEX]), 0,
+  phys_memset(vir2phys(&rp->p_ldt[EXTRA_LDT_INDEX]), 0, /* 设置除开DS,CS的局部描述符为空 */
 	(LDT_SIZE - EXTRA_LDT_INDEX) * sizeof(rp->p_ldt[0]));
   rp->p_reg.pc = (reg_t) m_ptr->PR_IP_PTR;	/* set pc */
   rp->p_rts_flags &= ~RECEIVING;	/* PM does not reply to EXEC call */

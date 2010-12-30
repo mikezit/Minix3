@@ -24,11 +24,11 @@ struct desctableptr_s {
  则是处理 CPU 在执行过程中本身检测到的问题.
 */
 struct gatedesc_s {
-  u16_t offset_low;	        /* 低偏移值 */
-  u16_t selector;	        /* 段选择符 */
+  u16_t offset_low;
+  u16_t selector;
   u8_t pad;			/* |000|XXXXX| ig & trpg, |XXXXXXXX| task g */
   u8_t p_dpl_type;		/* |P|DL|0|TYPE| */
-  u16_t offset_high;            /* 高偏移值 */
+  u16_t offset_high;
 };
 
 
@@ -178,12 +178,7 @@ PUBLIC void prot_init()
    * The pointer is set up so that an interrupt automatically saves the
    * current process's registers ip:cs:f:sp:ss in the correct slots in the
    * process table.
-   *
-   * 图中 SS0:ESP0 用于存放任务在内核态运行时的堆栈指针。SS1:ESP1 和 SS2:ESP2 分别对应运行于
-   * 特权级 1 和 2 时使用的堆栈指针,这两个特权级在 Linux 中没有使用。而任务工作于用户态时堆栈指针
-   * 则保存在 SS:ESP 寄存器中。
-  */
-
+   */
   tss.ss0 = DS_SELECTOR; /* 怎么只是设置了一个(SS0:ESP0 用于存放任务在内核态运行时的堆栈指针) */
   init_dataseg(&gdt[TSS_INDEX], vir2phys(&tss), sizeof(tss), INTR_PRIVILEGE);
   gdt[TSS_INDEX].access = PRESENT | (INTR_PRIVILEGE << DPL_SHIFT) | TSS_TYPE;
@@ -232,7 +227,7 @@ int privilege;
 }
 
 /*===========================================================================*
- *				sdesc					     *
+ *				sdesc (设置段描述符)			     *
  *===========================================================================*/
 PRIVATE void sdesc(segdp, base, size)
 register struct segdesc_s *segdp;
@@ -299,7 +294,7 @@ phys_bytes phys;
 /*===========================================================================*
  *				int_gate				     *
  *===========================================================================*/
-PRIVATE fvoid int_gate(vec_nr, offset, dpl_type)
+PRIVATE void int_gate(vec_nr, offset, dpl_type)
 unsigned vec_nr;
 vir_bytes offset;
 unsigned dpl_type;
@@ -344,7 +339,7 @@ register struct proc *rp;
 
   if (machine.protected) {
       data_bytes = (phys_bytes) (rp->p_memmap[S].mem_vir + 
-          rp->p_memmap[S].mem_len) << CLICK_SHIFT;
+          rp->p_memmap[S].mem_len) << CLICK_SHIFT; /* 在exec.c文件中可以解释 */
       if (rp->p_memmap[T].mem_len == 0)
           code_bytes = data_bytes;	/* common I&D, poor protect */
       else

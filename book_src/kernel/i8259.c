@@ -22,9 +22,8 @@
 /*===========================================================================*
  *				intr_init				     *
  *===========================================================================*/
-/* The argument mine is used to determine whether MINIX 3 is starting up or shutting down   */
 PUBLIC void intr_init(mine)
-int mine;  
+int mine;
 {
 /* Initialize the 8259s, finishing with all interrupts disabled.  This is
  * only done in protected mode, in real mode we don't touch the 8259s, but
@@ -74,7 +73,7 @@ irq_handler_t handler;
       panic("invalid call to put_irq_handler", irq);
 
   line = &irq_handlers[irq];
-  id = 1;			/* 把链表的长度限制在id的长度(32)之内 */
+  id = 1;
   while (*line != NULL) {
       if (hook == *line) return;	/* extra initialization */
       line = &(*line)->next;
@@ -108,7 +107,7 @@ irq_hook_t *hook;
   line = &irq_handlers[irq];
   while (*line != NULL) {
       if ((*line)->id == id) {	/* id的作用是在这里定位(32个当中的一个) */
-          (*line) = (*line)->next; /* 指针赋值 */
+          (*line) = (*line)->next;
           if (! irq_handlers[irq]) irq_use &= ~(1 << irq);
           return;
       }

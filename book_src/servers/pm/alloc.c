@@ -82,7 +82,7 @@ phys_clicks clicks;		/* amount of memory requested */
 }
 
 /*===========================================================================*
- *				free_mem(归还不再要的内存) 		     *
+ *				free_mem				     *
  *===========================================================================*/
 PUBLIC void free_mem(base, clicks)
 phys_clicks base;		/* base address of block to free */
@@ -95,7 +95,7 @@ phys_clicks clicks;		/* number of clicks to free */
  */
   register struct hole *hp, *new_ptr, *prev_ptr;
 
-  if (clicks == 0) return;   
+  if (clicks == 0) return;
   if ( (new_ptr = free_slots) == NIL_HOLE) 
   	panic(__FILE__,"hole table full", NO_NUM);
   new_ptr->h_base = base;
@@ -207,12 +207,12 @@ phys_clicks *free;		/* memory size summaries */
   /* Put all holes on the free list. */
   for (hp = &hole[0]; hp < &hole[NR_HOLES]; hp++) hp->h_next = hp + 1;
   hole[NR_HOLES-1].h_next = NIL_HOLE;
-  hole_head = NIL_HOLE;		/* 开始时候，hole_head为空 */
-  free_slots = &hole[0];	/* free_slots指向第一个hole */
+  hole_head = NIL_HOLE;
+  free_slots = &hole[0];
 
   /* Use the chunks of physical memory to allocate holes. */
   *free = 0;
-  for (i=NR_MEMS-1; i>=0; i--) { /* 由高端向底端移动*/
+  for (i=NR_MEMS-1; i>=0; i--) {
   	if (chunks[i].size > 0) {
 		free_mem(chunks[i].base, chunks[i].size);
 		*free += chunks[i].size;

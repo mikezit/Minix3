@@ -56,10 +56,10 @@ FORWARD _PROTOTYPE( void dequeue, (struct proc *rp) );
 FORWARD _PROTOTYPE( void sched, (struct proc *rp, int *queue, int *front) );
 FORWARD _PROTOTYPE( void pick_proc, (void) );
 
-!参数：
-!    message  m_ptr :消息结构
-!    int      src   :发送的消息的进程号
-!    proc*    dst_ptr : 接受进程
+/* 参数： */
+/*     message  m_ptr :消息结构 */
+/*     int      src   :发送的消息的进程号 */
+/*     proc*    dst_ptr : 接受进程 */
 #define BuildMess(m_ptr, src, dst_ptr) \
 	(m_ptr)->m_source = (src); 					\
 	(m_ptr)->m_type = NOTIFY_FROM(src);				\
@@ -223,7 +223,7 @@ unsigned flags;				/* system call flags */
        (dst_ptr->p_getfrom == ANY || dst_ptr->p_getfrom == caller_ptr->p_nr)) {
 	/* Destination is indeed waiting for this message. */
 	CopyMess(caller_ptr->p_nr, caller_ptr, m_ptr, dst_ptr,
-		 dst_ptr->p_messbuf);
+		 dst_ptr->p_messbuf); 
 	if ((dst_ptr->p_rts_flags &= ~RECEIVING) == 0) enqueue(dst_ptr);
   } else if ( ! (flags & NON_BLOCKING)) { /* 接收进程没有阻塞，或者阻塞了但是在等待来自另外一个进程的消息 */
 	/* Destination is not waiting.  Block and dequeue caller. */

@@ -42,7 +42,7 @@ U16_t parmoff, parmsize;	/* boot parameters offset and length */
 #endif
 
   /* Record where the kernel and the monitor are. */
-  kinfo.code_base = seg2phys(cs);	 /* 从全局描述符表中找到地址 */
+  kinfo.code_base = seg2phys(cs);	        /* 从全局描述符表中找到物理地址 */
   kinfo.code_size = (phys_bytes) &etext;	/* size of code segment */
   kinfo.data_base = seg2phys(ds);		/* 内核数据段基地址 */
   kinfo.data_size = (phys_bytes) &end;		/* size of data segment */
@@ -52,7 +52,7 @@ U16_t parmoff, parmsize;	/* boot parameters offset and length */
 
   /* Copy the boot parameters to the local buffer. */
   kinfo.params_base = seg2phys(mds) + parmoff;
-  kinfo.params_size = MIN(parmsize,sizeof(params)-2); /* 后面的－2为何意思? */
+  kinfo.params_size = MIN(parmsize,sizeof(params)-2);
   phys_copy(kinfo.params_base, vir2phys(params), kinfo.params_size);
 
   /* Record miscellaneous information for user-space servers. */

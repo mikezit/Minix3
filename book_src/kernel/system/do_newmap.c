@@ -36,13 +36,13 @@ message *m_ptr;			/* pointer to request message */
   phys_copy(src_phys,vir2phys(rp->p_memmap),(phys_bytes)sizeof(rp->p_memmap));
 
 #if (CHIP != M68000)
-  alloc_segments(rp);
+  alloc_segments(rp);		/* 会为程序设置代码段,数据段等需要的寄存器数据 */
 #else
   pmmu_init_proc(rp);
 #endif
   old_flags = rp->p_rts_flags;	/* save the previous value of the flags */
   rp->p_rts_flags &= ~NO_MAP;
-  if (old_flags != 0 && rp->p_rts_flags == 0) lock_enqueue(rp);
+  if (old_flags != 0 && rp->p_rts_flags == 0) lock_enqueue(rp); /* 程序可以执行了,加入调度队列 */
 
   return(OK);
 }

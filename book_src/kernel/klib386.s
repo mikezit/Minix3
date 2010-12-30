@@ -406,7 +406,7 @@ PC_ARGS	=	4 + 4 + 4 + 4	! 4 + 4 + 4
 
 	.align	16
 _phys_copy:
-	cld
+	cld                             ! 窜操作指令, CLD 清方向标志位.
 	push	esi
 	push	edi
 	push	es

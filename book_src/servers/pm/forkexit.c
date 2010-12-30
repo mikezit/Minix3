@@ -80,7 +80,7 @@ PUBLIC int do_fork()
   /* A separate I&D child keeps the parents text segment.  The data and stack
    * segments must refer to the new copy.
    */
-  if (!(rmc->mp_flags & SEPARATE)) rmc->mp_seg[T].mem_phys = child_base; /* 当父进程是组合的I和D空间时候，才需要修改子进程代码段的基地址，不然则指向父进程的代码段空间(不用修改) */
+  if (!(rmc->mp_flags & SEPARATE)) rmc->mp_seg[T].mem_phys = child_base;
   rmc->mp_seg[D].mem_phys = child_base;
   rmc->mp_seg[S].mem_phys = rmc->mp_seg[D].mem_phys + 
 			(rmp->mp_seg[S].mem_vir - rmp->mp_seg[D].mem_vir);

@@ -22,7 +22,7 @@
  *
  * Changes:
  *   Aug 04, 2005   check if kernel call is allowed  (Jorrit N. Herder)
- *   Jul 20, 2005   send signal to services with message  (Jorrit N. Herder) 
+ *   Jul 20, 2005   send signal to services with message  (Jorrit N. Herder)
  *   Jan 15, 2005   new, generalized virtual copy function  (Jorrit N. Herder)
  *   Oct 10, 2004   dispatch system calls from call vector  (Jorrit N. Herder)
  *   Sep 30, 2004   source code documentation updated  (Jorrit N. Herder)
@@ -43,7 +43,7 @@
  * because the dummy is declared extern. If an illegal call is given, the 
  * array size will be negative and this won't compile. 
  */
-PUBLIC int (*call_vec[NR_SYS_CALLS])(message *m_ptr);
+PUBLIC int (*call_vec[NR_SYS_CALLS])(message *m_ptr); /* 函数数组 */
 
 #define map(call_nr, handler) \
     {extern int dummy[NR_SYS_CALLS>(unsigned)(call_nr-KERNEL_CALL) ? 1:-1];} \

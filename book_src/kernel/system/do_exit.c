@@ -33,7 +33,7 @@ message *m_ptr;			/* pointer to request message */
           clear_proc(proc_addr(exit_proc_nr));	/* exit a user process */
           return(OK);				/* report back to PM */
       }
-  } 
+  }
 
   /* The PM or some other system process requested to be exited. */
   clear_proc(proc_addr(m_ptr->m_source));

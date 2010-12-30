@@ -16,7 +16,7 @@ EXTERN struct mproc {
   int mp_parent;		/* index of parent process */
 
   /* Child user and system times. Accounting done on child exit. */
-  clock_t mp_child_utime;	/* cumulative user time of children */
+  clock_t mp_child_utime;	/* cumulative(累积的) user time of children */
   clock_t mp_child_stime;	/* cumulative sys time of children */
 
   /* Real and effective uids and gids. */
@@ -25,11 +25,12 @@ EXTERN struct mproc {
   gid_t mp_realgid;		/* process' real gid */
   gid_t mp_effgid;		/* process' effective gid */
 
-  /* File identification for sharing. (代码段共享检查) */
+  /* File identification for sharing. */
   ino_t mp_ino;			/* inode number of file */
   dev_t mp_dev;			/* device number of file system */
   time_t mp_ctime;		/* inode changed time */
 
+  /*sigset_t 是一个32位的整数,因此MINIX3最多支持32个信号  */
   /* Signal handling information. */
   sigset_t mp_ignore;		/* 1 means ignore the signal, 0 means don't */
   sigset_t mp_catch;		/* 1 means catch the signal, 0 means don't */
@@ -37,7 +38,7 @@ EXTERN struct mproc {
   sigset_t mp_sigmask;		/* signals to be blocked */
   sigset_t mp_sigmask2;		/* saved copy of mp_sigmask */
   sigset_t mp_sigpending;	/* pending signals to be handled */
-  struct sigaction mp_sigact[_NSIG + 1]; /* as in sigaction(2) */
+  struct sigaction mp_sigact[_NSIG + 1]; /* as in sigaction(2)每个信号对应一个 */
   vir_bytes mp_sigreturn; 	/* address of C library __sigreturn function */
   struct timer mp_timer;	/* watchdog timer for alarm(2) */
 

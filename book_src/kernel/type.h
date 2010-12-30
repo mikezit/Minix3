@@ -25,7 +25,7 @@ struct boot_image {
   char proc_name[P_NAME_LEN];		/* name in process table */
 };
 
-struct memory {
+struct memory {			        /* 在PM中使用 */
   phys_clicks base;			/* start address of chunk */
   phys_clicks size;			/* size of memory chunk */
 };

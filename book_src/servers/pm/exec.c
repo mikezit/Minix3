@@ -65,13 +65,13 @@ PUBLIC int do_exec()
   vir_bytes pc;
 
   /* Do some validity checks. */
-  rmp = mp;
+  rmp = mp;			/* 当前进程 */
   stk_bytes = (vir_bytes) m_in.stack_bytes;
   if (stk_bytes > ARG_MAX) return(ENOMEM);	/* stack too big */
   if (m_in.exec_len <= 0 || m_in.exec_len > PATH_MAX) return(EINVAL);
 
   /* Get the exec file name and see if the file is executable. */
-  src = (vir_bytes) m_in.exec_name; /* 传进来的是一个指针(地址) */
+  src = (vir_bytes) m_in.exec_name;
   dst = (vir_bytes) name_buf;
   r = sys_datacopy(who, (vir_bytes) src,
 		PM_PROC_NR, (vir_bytes) dst, (phys_bytes) m_in.exec_len);
@@ -80,7 +80,6 @@ PUBLIC int do_exec()
   /* Fetch the stack from the user before destroying the old core image. */
   src = (vir_bytes) m_in.stack_ptr;
   dst = (vir_bytes) mbuf;
-  /* 对两个进程的数据段的部分内容进行复制 */
   r = sys_datacopy(who, (vir_bytes) src,
   			PM_PROC_NR, (vir_bytes) dst, (phys_bytes)stk_bytes);
   /* can't fetch stack (e.g. bad virtual addr) */
@@ -90,12 +89,12 @@ PUBLIC int do_exec()
   name = name_buf;	/* name of file to exec. */
   do {
 	s_p = &s_buf[r];
-	tell_fs(CHDIR, who, FALSE, 0);  /* (为什么?)switch to the user's FS environ */
+	tell_fs(CHDIR, who, FALSE, 0);  /* switch to the user's FS environ */
 	fd = allowed(name, s_p, X_BIT);	/* is file executable? */
 	if (fd < 0)  return(fd);		/* file was not executable */
 
 	/* Read the file header and extract the segment sizes. */
-	sc = (stk_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT; /* 堆栈的click大小度量 */
+	sc = (stk_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT; /* stack size in clicks */
 
 	m = read_header(fd, &ft, &text_bytes, &data_bytes, &bss_bytes, 
 					&tot_bytes, &sym_bytes, sc, &pc);
@@ -126,9 +125,9 @@ PUBLIC int do_exec()
   vsp = (vir_bytes) rmp->mp_seg[S].mem_vir << CLICK_SHIFT;
   vsp += (vir_bytes) rmp->mp_seg[S].mem_len << CLICK_SHIFT;
   vsp -= stk_bytes;
-  patch_ptr(mbuf, vsp);
+  patch_ptr(mbuf, vsp);		/* 指针重定位 */
   src = (vir_bytes) mbuf;
-  r = sys_datacopy(PM_PROC_NR, (vir_bytes) src,
+  r = sys_datacopy(PM_PROC_NR, (vir_bytes) src, /* 把环境变量和参数复制到程序栈中 */
   			who, (vir_bytes) vsp, (phys_bytes)stk_bytes);
   if (r != OK) panic(__FILE__,"do_exec stack copy err on", who);
 
@@ -136,14 +135,14 @@ PUBLIC int do_exec()
   if (sh_mp != NULL) {
 	lseek(fd, (off_t) text_bytes, SEEK_CUR);  /* shared: skip text */
   } else {
-	rw_seg(0, fd, who, T, text_bytes);
+	rw_seg(0, fd, who, T, text_bytes); /* 从文件中复制代码段到程序代码段 */
   }
-  rw_seg(0, fd, who, D, data_bytes);
+  rw_seg(0, fd, who, D, data_bytes); /* 从文件中复制数据段到程序数据段 */
 
   close(fd);			/* don't need exec file any more */
 
   /* Take care of setuid/setgid bits. */
-  if ((rmp->mp_flags & TRACED) == 0) { /* suppress if tracing */
+  if ((rmp->mp_flags & TRACED) == 0) { /* suppress(镇压,禁止) if tracing */
 	if (s_buf[0].st_mode & I_SET_UID_BIT) {
 		rmp->mp_effuid = s_buf[0].st_uid;
 		tell_fs(SETUID,who, (int)rmp->mp_realuid, (int)rmp->mp_effuid);
@@ -155,14 +154,14 @@ PUBLIC int do_exec()
   }
 
   /* Save offset to initial argc (for ps) */
-  rmp->mp_procargs = vsp;
+  rmp->mp_procargs = vsp;	/* 设置初始栈指针 */
 
   /* Fix 'mproc' fields, tell kernel that exec is done,  reset caught sigs. */
   for (sn = 1; sn <= _NSIG; sn++) {
 	if (sigismember(&rmp->mp_catch, sn)) {
-		sigdelset(&rmp->mp_catch, sn);
-		rmp->mp_sigact[sn].sa_handler = SIG_DFL;
-		sigemptyset(&rmp->mp_sigact[sn].sa_mask);
+	     sigdelset(&rmp->mp_catch, sn);
+	     rmp->mp_sigact[sn].sa_handler = SIG_DFL;
+	     sigemptyset(&rmp->mp_sigact[sn].sa_mask);
 	}
   }
 
@@ -194,13 +193,18 @@ int fd;				/* file descriptor for reading exec file */
 int *ft;			/* place to return ft number */
 vir_bytes *text_bytes;		/* place to return text size */
 vir_bytes *data_bytes;		/* place to return initialized data size */
-vir_bytes *bss_bytes;		/* place to return bss size (前3个是虚拟地址)*/
-phys_bytes *tot_bytes;		/* place to return total size (大小的量度)*/
+vir_bytes *bss_bytes;		/* place to return bss size */
+phys_bytes *tot_bytes;		/* place to return total size */
 long *sym_bytes;		/* place to return symbol table size */
 vir_clicks sc;			/* stack size in clicks */
 vir_bytes *pc;			/* program entry point (initial PC) */
 {
 /* Read the header and extract the text, data, bss and total sizes from it. */
+
+  int m, ct;
+  vir_clicks tc, dc, s_vir, dvir;
+  phys_clicks totc;
+  struct exec hdr;		/* a.out header is read in here */
 
   /* Read the header and check the magic number.  The standard MINIX header 
    * is defined in <a.out.h>.  It consists of 8 chars followed by 6 longs.
@@ -229,11 +233,6 @@ vir_bytes *pc;			/* program entry point (initial PC) */
    * is ignored here.
    */
 
-  int m, ct;
-  vir_clicks tc, dc, s_vir, dvir;
-  phys_clicks totc;
-  struct exec hdr;		/* a.out header is read in here */
-
   if ((m= read(fd, &hdr, A_MINHDR)) < 2) return(ENOEXEC);
 
   /* Interpreted script? */
@@ -256,21 +255,21 @@ vir_bytes *pc;			/* program entry point (initial PC) */
   *sym_bytes  = hdr.a_syms;		/* symbol table size in bytes */
   if (*tot_bytes == 0) return(ENOEXEC);
 
-  if (*ft != SEPARATE) {	/* 数据段和代码段不是分开的 */
+  if (*ft != SEPARATE) {
 	/* If I & D space is not separated, it is all considered data. Text=0*/
 	*data_bytes += *text_bytes;
 	*text_bytes = 0;
   }
-  *pc = hdr.a_entry;	/* initial address to start execution(程序开始执行点) */
+  *pc = hdr.a_entry;	/* initial address to start execution */
 
   /* Check to see if segment sizes are feasible. */
-  tc = ((unsigned long) *text_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
-  dc = (*data_bytes + *bss_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
-  totc = (*tot_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
+  tc = ((unsigned long) *text_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT; /* 代码段用的click */
+  dc = (*data_bytes + *bss_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT; /* 数据段用的click */
+  totc = (*tot_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT; /* 总共用的click */
   if (dc >= totc) return(ENOEXEC);	/* stack must be at least 1 click */
-  dvir = (*ft == SEPARATE ? 0 : tc);	/* 数据段起始地址 */
-  s_vir = dvir + (totc - sc);	/* 计算堆栈段的虚地址(堆栈前面放的是参数和环境变量) */
-  m = (dvir + dc > s_vir) ? ENOMEM : OK; /* 堆栈的空间是否足够 */
+  dvir = (*ft == SEPARATE ? 0 : tc);	/* 数据段开始的地方 */
+  s_vir = dvir + (totc - sc);
+  m = (dvir + dc > s_vir) ? ENOMEM : OK;
   ct = hdr.a_hdrlen & BYTE;		/* header length */
   if (ct > A_MINHDR) lseek(fd, (off_t) ct, SEEK_SET); /* skip unused hdr */
   return(m);
@@ -289,7 +288,8 @@ vir_bytes stk_bytes;		/* size of initial stack segment in bytes */
 phys_bytes tot_bytes;		/* total memory to allocate, including gap */
 {
 /* Allocate new memory and release the old memory.  Change the map and report
- * the new map to the kernel.  Zero the new core image's bss, gap and stack.
+ * the new map to the kernel (让内核设置程序的局部寄存器等).  Zero the new core 
+ * image's bss, gap and stack.
  */
 
   register struct mproc *rmp = mp;
@@ -311,18 +311,18 @@ phys_bytes tot_bytes;		/* total memory to allocate, including gap */
    * boundary.  The data and bss parts are run together with no space.
    */
   text_clicks = ((unsigned long) text_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
-  data_clicks = (data_bytes + bss_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
-  stack_clicks = (stk_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
-  tot_clicks = (tot_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
-  gap_clicks = tot_clicks - data_clicks - stack_clicks;
-  if ( (int) gap_clicks < 0) return(ENOMEM);
+  data_clicks = (data_bytes + bss_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT; /* 数据段包含了bss段 */
+  stack_clicks = (stk_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT; /* 堆栈段 */
+  tot_clicks =  (tot_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;   /* 除开代码段给程序分配的所有空间 */
+  gap_clicks = tot_clicks - data_clicks - stack_clicks;	      /* 空隙 */
+  if ( (int) gap_clicks < 0) return(ENOMEM);		      /* 分配空间不够（主要是statck_click不够，因为最后statck_click加入了参数和环境变量） */
 
   /* Try to allocate memory for the new process. */
   new_base = alloc_mem(text_clicks + tot_clicks);
   if (new_base == NO_MEM) return(ENOMEM);
 
   /* We've got memory for the new core image.  Release the old one. */
-  rmp = mp;
+  rmp = mp;			/* 这个在函数开始的地方已经设置过了，我不知道为什么还要在这里进行设置 */
 
   if (find_share(rmp, rmp->mp_ino, rmp->mp_dev, rmp->mp_ctime) == NULL) {
 	/* No other process shares the text segment, so free it. */
@@ -330,28 +330,29 @@ phys_bytes tot_bytes;		/* total memory to allocate, including gap */
   }
   /* Free the data and stack segments. */
   free_mem(rmp->mp_seg[D].mem_phys,
-   rmp->mp_seg[S].mem_vir + rmp->mp_seg[S].mem_len - rmp->mp_seg[D].mem_vir);
+   rmp->mp_seg[S].mem_vir + rmp->mp_seg[S].mem_len - rmp->mp_seg[D].mem_vir); /* 从下面的代码来看，- rmp->mp_seg[D].mem_vir 需不需要? */
 
   /* We have now passed the point of no return.  The old core image has been
    * forever lost, memory for a new core image has been allocated.  Set up
    * and report new map.
    */
-  if (sh_mp != NULL) {
+  if (sh_mp != NULL) { /* 其他程序已经载入了该代码段,可以直接使用 */
 	/* Share the text segment. */
 	rmp->mp_seg[T] = sh_mp->mp_seg[T];
-  } else {
+  } else { /* 可以是SEPARATE也可以不是,如果是SEPARATE,是因为其他程序还没有载入该代码段 */
 	rmp->mp_seg[T].mem_phys = new_base;
 	rmp->mp_seg[T].mem_vir = 0;
 	rmp->mp_seg[T].mem_len = text_clicks;
   }
-  rmp->mp_seg[D].mem_phys = new_base + text_clicks;
+
+  rmp->mp_seg[D].mem_phys = new_base + text_clicks; /* 如果不是SEPARATE,text_clicks=0 */
   rmp->mp_seg[D].mem_vir = 0;
   rmp->mp_seg[D].mem_len = data_clicks;
   rmp->mp_seg[S].mem_phys = rmp->mp_seg[D].mem_phys + data_clicks + gap_clicks;
-  rmp->mp_seg[S].mem_vir = rmp->mp_seg[D].mem_vir + data_clicks + gap_clicks;
+  rmp->mp_seg[S].mem_vir = rmp->mp_seg[D].mem_vir + data_clicks + gap_clicks; /* 堆栈段的虚拟地址开始的地方是以数据段为基准的 */
   rmp->mp_seg[S].mem_len = stack_clicks;
 
-  sys_newmap(who, rmp->mp_seg);   /* report new map to the kernel */
+  sys_newmap(who, rmp->mp_seg);   /* report new map to the kernel (会设置程序的局部段选择符) */
 
   /* The old memory may have been swapped out, but the new memory is real. */
   rmp->mp_flags &= ~(WAITING|ONSWAP|SWAPIN);
@@ -359,8 +360,8 @@ phys_bytes tot_bytes;		/* total memory to allocate, including gap */
   /* Zero the bss, gap, and stack segment. */
   bytes = (phys_bytes)(data_clicks + gap_clicks + stack_clicks) << CLICK_SHIFT;
   base = (phys_bytes) rmp->mp_seg[D].mem_phys << CLICK_SHIFT;
-  bss_offset = (data_bytes >> CLICK_SHIFT) << CLICK_SHIFT;
-  base += bss_offset;
+  bss_offset = (data_bytes >> CLICK_SHIFT) << CLICK_SHIFT; /* 程序本身数据结束的位置数据 ,也就是*/
+  base += bss_offset;					   /* bss段开始的位置 */
   bytes -= bss_offset;
 
   if ((s=sys_memset(0, base, bytes)) != OK) {
@@ -403,7 +404,7 @@ vir_bytes base;			/* virtual address of stack base inside user */
 }
 
 /*===========================================================================*
-   *				insert_arg				     *
+ *				insert_arg				     *
  *===========================================================================*/
 PRIVATE int insert_arg(stack, stk_bytes, arg, replace)
 char stack[ARG_MAX];		/* pointer to stack image within PM */
@@ -416,7 +417,7 @@ int replace;
  *	nargs argv[0] ... argv[nargs-1] NULL envp[0] ... NULL
  * followed by the strings "pointed" to by the argv[i] and the envp[i].  The
  * pointers are really offsets from the start of stack.
- * Return true if the operation succeeded.
+ * Return true iff the operation succeeded.
  */
   int offset, a0, a1, old_bytes = *stk_bytes;
 
@@ -424,16 +425,16 @@ int replace;
   offset = strlen(arg) + 1;
 
   a0 = (int) ((char **) stack)[1];	/* argv[0] */
-  if (a0 < 4 * PTRSIZE || a0 >= old_bytes) return(FALSE); /* 指针越界 */
+  if (a0 < 4 * PTRSIZE || a0 >= old_bytes) return(FALSE);
 
   a1 = a0;			/* a1 will point to the strings to be moved */
-  if (replace) {   /*替换argv[0]*/
+  if (replace) {
 	/* Move a1 to the end of argv[0][] (argv[1] if nargs > 1). */
 	do {
 		if (a1 == old_bytes) return(FALSE);
-		--offset;   /* 计算argv[0]和arg之间的大小差别 */
-	} while (stack[a1++] != 0); /* stack[a1++] 意思是 数组基地址stack+地址a1++, */
-  } else {  /* 添加 */
+		--offset;
+	} while (stack[a1++] != 0);
+  } else {
 	offset += PTRSIZE;	/* new argv[0] needs new pointer in argv[] */
 	a0 += PTRSIZE;		/* location of new argv[0][]. */
   }
@@ -442,12 +443,11 @@ int replace;
   if ((*stk_bytes += offset) > ARG_MAX) return(FALSE);
 
   /* Reposition the strings by offset bytes */
-  /* 内存整体移位 */
-  memmove(stack + a1 + offset, stack + a1, old_bytes - a1); /* 堆栈会不会在高端溢出? */
+  memmove(stack + a1 + offset, stack + a1, old_bytes - a1);
 
   strcpy(stack + a0, arg);	/* Put arg in the new space. */
 
-  if (!replace) { /*如果是append,则还要设置argv[0]  */
+  if (!replace) {
 	/* Make space for a new argv[0]. */
 	memmove(stack + 2 * PTRSIZE, stack + 1 * PTRSIZE, a0 - 2 * PTRSIZE);
 
@@ -558,9 +558,9 @@ phys_bytes seg_bytes0;		/* how much is to be transferred? */
  *===========================================================================*/
 PUBLIC struct mproc *find_share(mp_ign, ino, dev, ctime)
 struct mproc *mp_ign;		/* process that should not be looked at */
-ino_t ino;			/* parameters that uniquely identify a file(i-node节点号) */
-dev_t dev;                      /*设备号码*/
-time_t ctime;			/* 文件状态（属性）改变时间  */
+ino_t ino;			/* parameters that uniquely identify a file */
+dev_t dev;
+time_t ctime;
 {
 /* Look for a process that is the file <ino, dev, ctime> in execution.  Don't
  * accidentally "find" mp_ign, because it is the process on whose behalf this

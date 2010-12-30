@@ -42,13 +42,13 @@ PUBLIC int do_brk()
   vir_clicks new_clicks;
 
   rmp = mp;
-  v = (vir_bytes) m_in.addr;
-  new_clicks = (vir_clicks) ( ((long) v + CLICK_SIZE - 1) >> CLICK_SHIFT);
+  v = (vir_bytes) m_in.addr;	/* 新的数据段结束地址 */
+  new_clicks = (vir_clicks) ( ((long) v + CLICK_SIZE - 1) >> CLICK_SHIFT); /* 对应块地址 */
   if (new_clicks < rmp->mp_seg[D].mem_vir) {
 	rmp->mp_reply.reply_ptr = (char *) -1;
 	return(ENOMEM);
   }
-  new_clicks -= rmp->mp_seg[D].mem_vir;
+  new_clicks -= rmp->mp_seg[D].mem_vir;	     /* 地址数据段现在需要的块数 */
   if ((r=get_stack_ptr(who, &new_sp)) != OK)	/* ask kernel for sp value */
   	panic(__FILE__,"couldn't get stack pointer", r);
   r = adjust(rmp, new_clicks, new_sp);
@@ -65,7 +65,8 @@ vir_clicks data_clicks;		/* how big is data segment to become? */
 vir_bytes sp;			/* new value of sp */
 {
 /* See if data and stack segments can coexist, adjusting them if need be.
- * Memory is never allocated or freed.  Instead it is added or removed from the
+ * Memory is never allocated or freed(意思是这个函数调用不会引起内存的分配和释放,
+ * 而只是改变gap空隙).  Instead it is added or removed from the
  * gap between data segment and stack segment.  If the gap size becomes
  * negative, the adjustment of data or stack fails and ENOMEM is returned.
  */
@@ -82,13 +83,13 @@ vir_bytes sp;			/* new value of sp */
   if (mem_sp->mem_len == 0) return(OK);	/* don't bother init */
 
   /* See if stack size has gone negative (i.e., sp too close to 0xFFFF...) */
-  base_of_stack = (long) mem_sp->mem_vir + (long) mem_sp->mem_len;
+  base_of_stack = (long) mem_sp->mem_vir + (long) mem_sp->mem_len; /* 栈基址(高地址)  */
   sp_click = sp >> CLICK_SHIFT;	/* click containing sp */
-  if (sp_click >= base_of_stack) return(ENOMEM);	/* sp too high */
+  if (sp_click >= base_of_stack) return(ENOMEM);	/* sp too high (栈减小到负或0) */
 
   /* Compute size of gap between stack and data segments. */
-  delta = (long) mem_sp->mem_vir - (long) sp_click;
-  lower = (delta > 0 ? sp_click : mem_sp->mem_vir);
+  delta = (long) mem_sp->mem_vir - (long) sp_click; /* 查看堆栈是否越出了mem_sp->mem_vir */
+  lower = (delta > 0 ? sp_click : mem_sp->mem_vir); /* sp_click < mem_sp->mem_vir 则表示溢出 */
 
   /* Add a safety margin for future stack growth. Impossible to do right. */
 #define SAFETY_BYTES  (384 * sizeof(char *))
@@ -104,7 +105,7 @@ vir_bytes sp;			/* new value of sp */
   }
 
   /* Update stack length and origin due to change in stack pointer. */
-  if (delta > 0) {
+  if (delta > 0) {    /* 堆栈段增加的情况,有没有可能堆栈段减小 */
 	mem_sp->mem_vir -= delta;
 	mem_sp->mem_phys -= delta;
 	mem_sp->mem_len += delta;
@@ -113,8 +114,13 @@ vir_bytes sp;			/* new value of sp */
 
   /* Do the new data and stack segment sizes fit in the address space? */
   ft = (rmp->mp_flags & SEPARATE);
+#if (CHIP == INTEL && _WORD_SIZE == 2)
+  r = size_ok(ft, rmp->mp_seg[T].mem_len, rmp->mp_seg[D].mem_len, 
+       rmp->mp_seg[S].mem_len, rmp->mp_seg[D].mem_vir, rmp->mp_seg[S].mem_vir);
+#else
   r = (rmp->mp_seg[D].mem_vir + rmp->mp_seg[D].mem_len > 
           rmp->mp_seg[S].mem_vir) ? ENOMEM : OK;
+#endif
   if (r == OK) {
 	if (changed) sys_newmap((int)(rmp - mproc), rmp->mp_seg);
 	return(OK);
@@ -129,3 +135,42 @@ vir_bytes sp;			/* new value of sp */
   }
   return(ENOMEM);
 }
+
+#if (CHIP == INTEL && _WORD_SIZE == 2)
+/*===========================================================================*
+ *				size_ok  				     *
+ *===========================================================================*/
+PUBLIC int size_ok(file_type, tc, dc, sc, dvir, s_vir)
+int file_type;			/* SEPARATE or 0 */
+vir_clicks tc;			/* text size in clicks */
+vir_clicks dc;			/* data size in clicks */
+vir_clicks sc;			/* stack size in clicks */
+vir_clicks dvir;		/* virtual address for start of data seg */
+vir_clicks s_vir;		/* virtual address for start of stack seg */
+{
+/* Check to see if the sizes are feasible and enough segmentation registers
+ * exist.  On a machine with eight 8K pages, text, data, stack sizes of
+ * (32K, 16K, 16K) will fit, but (33K, 17K, 13K) will not, even though the
+ * former is bigger (64K) than the latter (63K).  Even on the 8088 this test
+ * is needed, since the data and stack may not exceed 4096 clicks.
+ * Note this is not used for 32-bit Intel Minix, the test is done in-line.
+ */
+
+  int pt, pd, ps;		/* segment sizes in pages */
+
+  pt = ( (tc << CLICK_SHIFT) + PAGE_SIZE - 1)/PAGE_SIZE;
+  pd = ( (dc << CLICK_SHIFT) + PAGE_SIZE - 1)/PAGE_SIZE;
+  ps = ( (sc << CLICK_SHIFT) + PAGE_SIZE - 1)/PAGE_SIZE;
+
+  if (file_type == SEPARATE) {
+	if (pt > MAX_PAGES || pd + ps > MAX_PAGES) return(ENOMEM);
+  } else {
+	if (pt + pd + ps > MAX_PAGES) return(ENOMEM);
+  }
+
+  if (dvir + dc > s_vir) return(ENOMEM);
+
+  return(OK);
+}
+#endif
+

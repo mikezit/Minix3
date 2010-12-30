@@ -106,11 +106,11 @@ _PROTOTYPE( __sighandler_t signal, (int _sig, __sighandler_t _func)	);
 _PROTOTYPE( int kill, (pid_t _pid, int _sig)				);
 _PROTOTYPE( int sigaction,
     (int _sig, const struct sigaction *_act, struct sigaction *_oact)	);
-_PROTOTYPE( int sigaddset, (sigset_t *_set, int _sig)			);
-_PROTOTYPE( int sigdelset, (sigset_t *_set, int _sig)			);
-_PROTOTYPE( int sigemptyset, (sigset_t *_set)				);
-_PROTOTYPE( int sigfillset, (sigset_t *_set)				);
-_PROTOTYPE( int sigismember, (const sigset_t *_set, int _sig)		);
+_PROTOTYPE( int sigaddset, (sigset_t *_set, int _sig)			); /* 位置一 */
+_PROTOTYPE( int sigdelset, (sigset_t *_set, int _sig)			); /* 位置零 */
+_PROTOTYPE( int sigemptyset, (sigset_t *_set)				); /* 全置零 */
+_PROTOTYPE( int sigfillset, (sigset_t *_set)				); /* 全置一 */
+_PROTOTYPE( int sigismember, (const sigset_t *_set, int _sig)		); /* 判断是否置位 */
 _PROTOTYPE( int sigpending, (sigset_t *_set)				);
 _PROTOTYPE( int sigprocmask,
 	    (int _how, const sigset_t *_set, sigset_t *_oset)		);

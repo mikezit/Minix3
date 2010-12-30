@@ -332,14 +332,14 @@ save:
 	mov	es, dx		! kernel does not use fs, gs
 	mov	eax, esp	! prepare to return
 	incb	(_k_reenter)	! from -1 if not reentering
-	jnz	set_restart1	! stack is already kernel stack(内核中发生异常)
+	jnz	set_restart1	! stack is already kernel stack
 	mov	esp, k_stktop
 	push	_restart	! build return address for int handler
 	xor	ebp, ebp	! for stacktrace
-	jmp	RETADR-P_STACKBASE(eax)!上面设置的eax在这个地方调用
+	jmp	RETADR-P_STACKBASE(eax)
 
 	.align	4
-set_restart1:			!在内核代码正在执行的时候发生异常的情况(完成有将执行restart1)
+set_restart1:
 	push	restart1
 	jmp	RETADR-P_STACKBASE(eax)
 

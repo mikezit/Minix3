@@ -13,7 +13,7 @@ struct	exec {			/* a.out header */
   long		a_text;		/* size of text segement in bytes */
   long		a_data;		/* size of data segment in bytes */
   long		a_bss;		/* size of bss segment in bytes */
-  long		a_entry;	/* program entry point */
+  long		a_entry;	/* entry point */
   long		a_total;	/* total memory allocated */
   long		a_syms;		/* size of symbol table */
 
@@ -51,8 +51,8 @@ struct	exec {			/* a.out header */
 
 /* Offsets of various things. */
 #define A_MINHDR	32
-#define	A_TEXTPOS(X)	((long)(X).a_hdrlen)
-#define A_DATAPOS(X)	(A_TEXTPOS(X) + (X).a_text)
+#define	A_TEXTPOS(X)	((long)(X).a_hdrlen) /* 头过了就是代码段 */
+#define A_DATAPOS(X)	(A_TEXTPOS(X) + (X).a_text) /* 数据段位置 */
 #define	A_HASRELS(X)	((X).a_hdrlen > (unsigned char) A_MINHDR)
 #define A_HASEXT(X)	((X).a_hdrlen > (unsigned char) (A_MINHDR +  8))
 #define A_HASLNS(X)	((X).a_hdrlen > (unsigned char) (A_MINHDR + 16))
