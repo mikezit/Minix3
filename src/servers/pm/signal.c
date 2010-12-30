@@ -24,19 +24,19 @@
 #include <sys/stat.h>
 #include <sys/ptrace.h>
 #include <minix/callnr.h>
-#include <minix/endpoint.h>
 #include <minix/com.h>
-#include <minix/vm.h>
 #include <signal.h>
-#include <sys/resource.h>
 #include <sys/sigcontext.h>
 #include <string.h>
 #include "mproc.h"
 #include "param.h"
 
-FORWARD _PROTOTYPE( int dump_core, (struct mproc *rmp)			);
-FORWARD _PROTOTYPE( void unpause, (int pro, int for_trace)		);
-FORWARD _PROTOTYPE( void handle_ksig, (int proc_nr, sigset_t sig_map)	);
+#define CORE_MODE	0777	/* mode to use on core image files */
+#define DUMPED          0200	/* bit set in status when core dumped */
+
+FORWARD _PROTOTYPE( void dump_core, (struct mproc *rmp)			);
+FORWARD _PROTOTYPE( void unpause, (int pro)				);
+FORWARD _PROTOTYPE( void handle_sig, (int proc_nr, sigset_t sig_map)	);
 FORWARD _PROTOTYPE( void cause_sigalrm, (struct timer *tp)		);
 
 /*===========================================================================*
@@ -53,7 +53,7 @@ PUBLIC int do_sigaction()
   svp = &mp->mp_sigact[m_in.sig_nr];
   if ((struct sigaction *) m_in.sig_osa != (struct sigaction *) NULL) {
 	r = sys_datacopy(PM_PROC_NR,(vir_bytes) svp,
-		who_e, (vir_bytes) m_in.sig_osa, (phys_bytes) sizeof(svec));
+		who, (vir_bytes) m_in.sig_osa, (phys_bytes) sizeof(svec));
 	if (r != OK) return(r);
   }
 
@@ -61,7 +61,7 @@ PUBLIC int do_sigaction()
   	return(OK);
 
   /* Read in the sigaction structure. */
-  r = sys_datacopy(who_e, (vir_bytes) m_in.sig_nsa,
+  r = sys_datacopy(who, (vir_bytes) m_in.sig_nsa,
 		PM_PROC_NR, (vir_bytes) &svec, (phys_bytes) sizeof(svec));
   if (r != OK) return(r);
 
@@ -93,7 +93,7 @@ PUBLIC int do_sigaction()
 }
 
 /*===========================================================================*
- *				do_sigpending                                *
+ *				do_sigpending(得到阻塞的信号)                   *
  *===========================================================================*/
 PUBLIC int do_sigpending()
 {
@@ -113,8 +113,7 @@ PUBLIC int do_sigprocmask()
  *
  * The library interface must set SIG_INQUIRE if the 'act' argument
  * is NULL.
- *
- * KILL and STOP can't be masked.
+ * 得到屏蔽的信号，设置阻塞信号
  */
 
   int i;
@@ -123,8 +122,7 @@ PUBLIC int do_sigprocmask()
 
   switch (m_in.sig_how) {
       case SIG_BLOCK:
-	sigdelset((sigset_t *)&m_in.sig_set, SIGKILL);
-	sigdelset((sigset_t *)&m_in.sig_set, SIGSTOP);
+	   sigdelset((sigset_t *)&m_in.sig_set, SIGKILL); /* SIGKILL信号不能被阻塞 */
 	for (i = 1; i <= _NSIG; i++) {
 		if (sigismember((sigset_t *)&m_in.sig_set, i))
 			sigaddset(&mp->mp_sigmask, i);
@@ -141,7 +139,6 @@ PUBLIC int do_sigprocmask()
 
       case SIG_SETMASK:
 	sigdelset((sigset_t *) &m_in.sig_set, SIGKILL);
-	sigdelset((sigset_t *) &m_in.sig_set, SIGSTOP);
 	mp->mp_sigmask = (sigset_t) m_in.sig_set;
 	check_pending(mp);
 	break;
@@ -183,7 +180,7 @@ PUBLIC int do_sigreturn()
   mp->mp_sigmask = (sigset_t) m_in.sig_set;
   sigdelset(&mp->mp_sigmask, SIGKILL);
 
-  r = sys_sigreturn(who_e, (struct sigmsg *) m_in.sig_context);
+  r = sys_sigreturn(who, (struct sigmsg *) m_in.sig_context);
   check_pending(mp);
   return(r);
 }
@@ -213,54 +210,34 @@ PUBLIC int ksig_pending()
  * signals until all signals are handled. If there are no more signals,
  * NONE is returned in the process number field.
  */ 
- int proc_nr_e;
+ int proc_nr;
  sigset_t sig_map;
 
  while (TRUE) {
-   int r;
-   /* get an arbitrary pending signal */
-   if((r=sys_getksig(&proc_nr_e, &sig_map)) != OK)
-  	panic(__FILE__,"sys_getksig failed", r);
-   if (NONE == proc_nr_e) {		/* stop if no more pending signals */
+   sys_getksig(&proc_nr, &sig_map); 	/* get an arbitrary pending signal */
+   if (NONE == proc_nr) {		/* stop if no more pending signals */
  	break;
    } else {
- 	int proc_nr_p;
- 	if(pm_isokendpt(proc_nr_e, &proc_nr_p) != OK)
-  		panic(__FILE__,"sys_getksig strange process", proc_nr_e);
-   	handle_ksig(proc_nr_e, sig_map);	/* handle the received signal */
-	/* If the process still exists to the kernel after the signal
-	 * has been handled ...
-	 */
-        if ((mproc[proc_nr_p].mp_flags & (IN_USE | ZOMBIE)) == IN_USE)
-	{
-	   if((r=sys_endksig(proc_nr_e)) != OK)	/* ... tell kernel it's done */
-  		panic(__FILE__,"sys_endksig failed", r);
-	}
+   	handle_sig(proc_nr, sig_map);	/* handle the received signal */
+	sys_endksig(proc_nr);		/* tell kernel it's done */
    }
  } 
  return(SUSPEND);			/* prevents sending reply */
 }
 
 /*===========================================================================*
- *				handle_ksig				     *
+ *				handle_sig				     *
  *===========================================================================*/
-PRIVATE void handle_ksig(proc_nr_e, sig_map)
-int proc_nr_e;
+PRIVATE void handle_sig(proc_nr, sig_map)
+int proc_nr;
 sigset_t sig_map;
 {
   register struct mproc *rmp;
-  int i, proc_nr;
+  int i;
   pid_t proc_id, id;
 
-  if(pm_isokendpt(proc_nr_e, &proc_nr) != OK || proc_nr < 0) {
-	printf("PM: handle_ksig: %d?? not ok\n", proc_nr_e);
-	return;
-  }
   rmp = &mproc[proc_nr];
-  if ((rmp->mp_flags & (IN_USE | ZOMBIE)) != IN_USE) {
-	printf("PM: handle_ksig: %d?? zombie / not in use\n", proc_nr_e);
-	return;
-}
+  if ((rmp->mp_flags & (IN_USE | ZOMBIE)) != IN_USE) return;
   proc_id = rmp->mp_pid;
   mp = &mproc[0];			/* pretend signals are from PM */
   mp->mp_procgrp = rmp->mp_procgrp;	/* get process group right */
@@ -268,21 +245,18 @@ sigset_t sig_map;
   /* Check each bit in turn to see if a signal is to be sent.  Unlike
    * kill(), the kernel may collect several unrelated signals for a
    * process and pass them to PM in one blow.  Thus loop on the bit
-   * map. For SIGINT, SIGWINCH and SIGQUIT, use proc_id 0 to indicate
-   * a broadcast to the recipient's process group.  For SIGKILL, use
-   * proc_id -1 to indicate a systemwide broadcast.
+   * map. For SIGINT and SIGQUIT, use proc_id 0 to indicate a broadcast
+   * to the recipient's process group.  For SIGKILL, use proc_id -1 to
+   * indicate a systemwide broadcast.
    */
   for (i = 1; i <= _NSIG; i++) {
 	if (!sigismember(&sig_map, i)) continue;
-#if 0
-	printf("PM: sig %d for %d from kernel\n", 
-		i, proc_nr_e);
-#endif
 	switch (i) {
 	    case SIGINT:
 	    case SIGQUIT:
-	    case SIGWINCH:
 		id = 0; break;	/* broadcast to process group */
+	    case SIGKILL:
+		id = -1; break;	/* broadcast to all except INIT */
 	    default:
 		id = proc_id;
 		break;
@@ -297,14 +271,14 @@ sigset_t sig_map;
 PUBLIC int do_alarm()
 {
 /* Perform the alarm(seconds) system call. */
-  return(set_alarm(who_e, m_in.seconds));
+  return(set_alarm(who, m_in.seconds));
 }
 
 /*===========================================================================*
  *				set_alarm				     *
  *===========================================================================*/
-PUBLIC int set_alarm(proc_nr_e, sec)
-int proc_nr_e;			/* process that wants the alarm */
+PUBLIC int set_alarm(proc_nr, sec)
+int proc_nr;			/* process that wants the alarm */
 int sec;			/* how many seconds delay before the signal */
 {
 /* This routine is used by do_alarm() to set the alarm timer.  It is also used
@@ -315,16 +289,12 @@ int sec;			/* how many seconds delay before the signal */
   clock_t uptime;	/* current system time */
   int remaining;	/* previous time left in seconds */
   int s;
-  int proc_nr_n;
-
-  if(pm_isokendpt(proc_nr_e, &proc_nr_n) != OK)
-	return EINVAL;
 
   /* First determine remaining time of previous alarm, if set. */
-  if (mproc[proc_nr_n].mp_flags & ALARM_ON) {
+  if (mproc[proc_nr].mp_flags & ALARM_ON) {
   	if ( (s=getuptime(&uptime)) != OK) 
   		panic(__FILE__,"set_alarm couldn't get uptime", s);
-  	exptime = *tmr_exp_time(&mproc[proc_nr_n].mp_timer);
+  	exptime = *tmr_exp_time(&mproc[proc_nr].mp_timer);
   	remaining = (int) ((exptime - uptime + (HZ-1))/HZ);
   	if (remaining < 0) remaining = 0;	
   } else {
@@ -352,12 +322,11 @@ int sec;			/* how many seconds delay before the signal */
 	ticks = LONG_MAX;	/* eternity (really TMR_NEVER) */
 
   if (ticks != 0) {
-  	pm_set_timer(&mproc[proc_nr_n].mp_timer, ticks,
-		cause_sigalrm, proc_nr_e);
-  	mproc[proc_nr_n].mp_flags |=  ALARM_ON;
-  } else if (mproc[proc_nr_n].mp_flags & ALARM_ON) {
-  	pm_cancel_timer(&mproc[proc_nr_n].mp_timer);
-  	mproc[proc_nr_n].mp_flags &= ~ALARM_ON;
+  	pm_set_timer(&mproc[proc_nr].mp_timer, ticks, cause_sigalrm, proc_nr);
+  	mproc[proc_nr].mp_flags |=  ALARM_ON;
+  } else if (mproc[proc_nr].mp_flags & ALARM_ON) {
+  	pm_cancel_timer(&mproc[proc_nr].mp_timer);
+  	mproc[proc_nr].mp_flags &= ~ALARM_ON;
   }
   return(remaining);
 }
@@ -368,17 +337,11 @@ int sec;			/* how many seconds delay before the signal */
 PRIVATE void cause_sigalrm(tp)
 struct timer *tp;
 {
-  int proc_nr_n;
+  int proc_nr;
   register struct mproc *rmp;
 
-  /* get process from timer */
-  if(pm_isokendpt(tmr_arg(tp)->ta_int, &proc_nr_n) != OK) {
-	printf("PM: ignoring timer for invalid endpoint %d\n",
-		tmr_arg(tp)->ta_int);
-	return;
-  }
-
-  rmp = &mproc[proc_nr_n];
+  proc_nr = tmr_arg(tp)->ta_int;	/* get process from timer */
+  rmp = &mproc[proc_nr];
 
   if ((rmp->mp_flags & (IN_USE | ZOMBIE)) != IN_USE) return;
   if ((rmp->mp_flags & ALARM_ON) == 0) return;
@@ -418,10 +381,11 @@ int signo;			/* signal to send to process (1 to _NSIG) */
  * If there is insufficient stack space, kill the process.
  */
 
-  vir_bytes cur_sp;
+  vir_bytes new_sp;
   int s;
   int slot;
   int sigflags;
+  struct sigmsg sm;
 
   slot = (int) (rmp - mproc);
   if ((rmp->mp_flags & (IN_USE | ZOMBIE)) != IN_USE) {
@@ -429,18 +393,9 @@ int signo;			/* signal to send to process (1 to _NSIG) */
 		signo, (rmp->mp_flags & ZOMBIE) ? "zombie" : "dead", slot);
 	panic(__FILE__,"", NO_NUM);
   }
-  if (rmp->mp_fs_call != PM_IDLE || rmp->mp_fs_call2 != PM_IDLE)
-  {
-	sigaddset(&rmp->mp_sigpending, signo);
-	rmp->mp_flags |= PM_SIG_PENDING;
-	/* keep the process from running */
-	sys_nice(rmp->mp_endpoint, PRIO_STOP);
-	return;
-		
-  }
   if ((rmp->mp_flags & TRACED) && signo != SIGKILL) {
 	/* A traced process has special handling. */
-	unpause(slot, TRUE /*for_trace*/);
+	unpause(slot);
 	stop_proc(rmp, signo);	/* a signal causes it to stop */
 	return;
   }
@@ -456,15 +411,24 @@ int signo;			/* signal to send to process (1 to _NSIG) */
   sigflags = rmp->mp_sigact[signo].sa_flags;
   if (sigismember(&rmp->mp_catch, signo)) {
 	if (rmp->mp_flags & SIGSUSPENDED)
-		rmp->mp_sigmsg.sm_mask = rmp->mp_sigmask2;
+		sm.sm_mask = rmp->mp_sigmask2;
 	else
-		rmp->mp_sigmsg.sm_mask = rmp->mp_sigmask;
-	rmp->mp_sigmsg.sm_signo = signo;
-	rmp->mp_sigmsg.sm_sighandler =
-		(vir_bytes) rmp->mp_sigact[signo].sa_handler;
-	rmp->mp_sigmsg.sm_sigreturn = rmp->mp_sigreturn;
-	rmp->mp_sigmask |= rmp->mp_sigact[signo].sa_mask;
+		sm.sm_mask = rmp->mp_sigmask;
+	sm.sm_signo = signo;
+	sm.sm_sighandler = (vir_bytes) rmp->mp_sigact[signo].sa_handler;
+	sm.sm_sigreturn = rmp->mp_sigreturn;
+	if ((s=get_stack_ptr(slot, &new_sp)) != OK)
+		panic(__FILE__,"couldn't get new stack pointer",s);
+	sm.sm_stkptr = new_sp;
 
+	/* Make room for the sigcontext and sigframe struct. */
+	new_sp -= sizeof(struct sigcontext)
+				 + 3 * sizeof(char *) + 2 * sizeof(int);
+
+	if (adjust(rmp, rmp->mp_seg[D].mem_len, new_sp) != OK)
+		goto doterminate;
+
+	rmp->mp_sigmask |= rmp->mp_sigact[signo].sa_mask;
 	if (sigflags & SA_NODEFER)
 		sigdelset(&rmp->mp_sigmask, signo);
 	else
@@ -474,69 +438,35 @@ int signo;			/* signal to send to process (1 to _NSIG) */
 		sigdelset(&rmp->mp_catch, signo);
 		rmp->mp_sigact[signo].sa_handler = SIG_DFL;
 	}
-	sigdelset(&rmp->mp_sigpending, signo);
 
-	/* Stop process from running before we fiddle with its stack. */
-	sys_nice(rmp->mp_endpoint, PRIO_STOP);
-	if(vm_push_sig(rmp->mp_endpoint, &cur_sp) != OK)
-		goto doterminate;
+	if (OK == (s=sys_sigsend(slot, &sm))) {
 
-        rmp->mp_sigmsg.sm_stkptr = cur_sp;
-
-	/* Check to see if process is hanging on a PAUSE, WAIT or SIGSUSPEND
-	 * call.
-	 */
-	if (rmp->mp_flags & (PAUSED | WAITING | SIGSUSPENDED)) {
-		rmp->mp_flags &= ~(PAUSED | WAITING | SIGSUSPENDED);
-		setreply(slot, EINTR);
-
-		/* Ask the kernel to deliver the signal */
-		s= sys_sigsend(rmp->mp_endpoint, &rmp->mp_sigmsg);
-		if (s != OK)
-			panic(__FILE__, "sys_sigsend failed", s);
-
-		/* Done */
+		sigdelset(&rmp->mp_sigpending, signo);
+		/* If process is hanging on PAUSE, WAIT, SIGSUSPEND, tty, 
+		 * pipe, etc., release it.
+		 */
+		unpause(slot);
 		return;
 	}
-
-	/* Ask FS to unpause the process. Deliver the signal when FS is
-	 * ready.
-	 */
-	unpause(slot, FALSE /*!for_trace*/);
-	return;
+  	panic(__FILE__, "warning, sys_sigsend failed", s);
   }
   else if (sigismember(&rmp->mp_sig2mess, signo)) {
-
-	/* Mark event pending in process slot and send notification. */
-	sigaddset(&rmp->mp_sigpending, signo);
-	notify(rmp->mp_endpoint);
+  	if (OK != (s=sys_kill(slot,signo)))
+  		panic(__FILE__, "warning, sys_kill failed", s);
   	return;
   }
 
 doterminate:
   /* Signal should not or cannot be caught.  Take default action. */
-  if (sigismember(&ign_sset, signo)) {
-	return;
-}
-
-  /* This process will exit, with or without dumping core. 
-   * Announce this fact to VM.
-   */
-  if((s=vm_willexit(rmp->mp_endpoint)) != OK) {
-	panic(__FILE__,"sig_proc: vm_willexit failed", s);
-  }
+  if (sigismember(&ign_sset, signo)) return;
 
   rmp->mp_sigstatus = (char) signo;
-  if (sigismember(&core_sset, signo) && slot != FS_PROC_NR) {
-	printf("PM: signal %d for %d / %s\n", signo, rmp->mp_pid, rmp->mp_name);
-	s= dump_core(rmp);
-	if (s == SUSPEND) {
-		return;
-	}
-
-	/* Not dumping core, just call exit */
+  if (sigismember(&core_sset, signo)) {
+	/* Switch to the user's FS environment and dump core. */
+	tell_fs(CHDIR, slot, FALSE, 0);
+	dump_core(rmp);
   }
-  pm_exit(rmp, 0, FALSE /*!for_trace*/);	/* terminate process */
+  pm_exit(rmp, 0);		/* terminate process */
 }
 
 /*===========================================================================*
@@ -560,8 +490,8 @@ int signo;			/* signal to send to process (0 to _NSIG) */
   /* Return EINVAL for attempts to send SIGKILL to INIT alone. */
   if (proc_id == INIT_PID && signo == SIGKILL) return(EINVAL);
 
-  /* Search the proc table for processes to signal.  
-   * (See forkexit.c aboutpid magic.)
+  /* Search the proc table for processes to signal.  (See forkexit.c about
+   * pid magic.)
    */
   count = 0;
   error_code = ESRCH;
@@ -574,10 +504,6 @@ int signo;			/* signal to send to process (0 to _NSIG) */
 	if (proc_id == 0 && mp->mp_procgrp != rmp->mp_procgrp) continue;
 	if (proc_id == -1 && rmp->mp_pid <= INIT_PID) continue;
 	if (proc_id < -1 && rmp->mp_procgrp != -proc_id) continue;
-
-	/* Do not kill servers and drivers when broadcasting SIGKILL. */
-	if (proc_id == -1 && signo == SIGKILL &&
-		(rmp->mp_flags & PRIV_PROC)) continue;
 
 	/* Check for permission. */
 	if (mp->mp_effuid != SUPER_USER
@@ -638,9 +564,8 @@ register struct mproc *rmp;
 /*===========================================================================*
  *				unpause					     *
  *===========================================================================*/
-PRIVATE void unpause(pro, for_trace)
+PRIVATE void unpause(pro)
 int pro;			/* which process number */
-int for_trace;			/* for tracing */
 {
 /* A signal is to be sent to a process.  If that process is hanging on a
  * system call, the system call must be terminated with EINTR.  Possible
@@ -648,8 +573,8 @@ int for_trace;			/* for tracing */
  * First check if the process is hanging on an PM call.  If not, tell FS,
  * so it can check for READs and WRITEs from pipes, ttys and the like.
  */
+
   register struct mproc *rmp;
-  int r;
 
   rmp = &mproc[pro];
 
@@ -661,42 +586,30 @@ int for_trace;			/* for tracing */
   }
 
   /* Process is not hanging on an PM call.  Ask FS to take a look. */
-  if (for_trace)
-  {
-	  if (rmp->mp_fs_call != PM_IDLE)
-		panic( __FILE__, "unpause: not idle", rmp->mp_fs_call);
-	  rmp->mp_fs_call= PM_UNPAUSE_TR;
-  }
-  else
-  {
-	  if (rmp->mp_fs_call2 != PM_IDLE)
-		panic( __FILE__, "unpause: not idle", rmp->mp_fs_call2);
-	  rmp->mp_fs_call2= PM_UNPAUSE;
-  }
-  r= notify(FS_PROC_NR);
-  if (r != OK) panic("pm", "unpause: unable to notify FS", r);
+  tell_fs(UNPAUSE, pro, 0, 0);
 }
 
 /*===========================================================================*
  *				dump_core				     *
  *===========================================================================*/
-PRIVATE int dump_core(rmp)
+PRIVATE void dump_core(rmp)
 register struct mproc *rmp;	/* whose core is to be dumped */
 {
 /* Make a core dump on the file "core", if possible. */
 
-  int r, proc_nr, proc_nr_e, parent_waiting;
-  pid_t procgrp;
-#if 0
+  int s, fd, seg, slot;
   vir_bytes current_sp;
-#endif
-  struct mproc *p_mp;
-  clock_t user_time, sys_time;
+  long trace_data, trace_off;
 
-  printf("dumpcore for %d / %s\n", rmp->mp_pid, rmp->mp_name);
+  slot = (int) (rmp - mproc);
 
-  /* Do not create core files for set uid execution */
-  if (rmp->mp_realuid != rmp->mp_effuid) return OK;
+  /* Can core file be written?  We are operating in the user's FS environment,
+   * so no special permission checks are needed.
+   */
+  if (rmp->mp_realuid != rmp->mp_effuid) return;
+  if ( (fd = open(core_name, O_WRONLY | O_CREAT | O_TRUNC | O_NONBLOCK,
+						CORE_MODE)) < 0) return;
+  rmp->mp_sigstatus |= DUMPED;
 
   /* Make sure the stack segment is up to date.
    * We don't want adjust() to fail unless current_sp is preposterous,
@@ -704,93 +617,33 @@ register struct mproc *rmp;	/* whose core is to be dumped */
    * the adjust() for sending a signal to fail due to safety checking.  
    * Maybe make SAFETY_BYTES a parameter.
    */
-#if 0
-  if ((r= get_stack_ptr(rmp->mp_endpoint, &current_sp)) != OK)
-	panic(__FILE__,"couldn't get new stack pointer (for core)", r);
+  if ((s=get_stack_ptr(slot, &current_sp)) != OK)
+	panic(__FILE__,"couldn't get new stack pointer",s);
   adjust(rmp, rmp->mp_seg[D].mem_len, current_sp);
-#endif
 
-  /* Tell FS about the exiting process. */
-  if (rmp->mp_fs_call != PM_IDLE)
-	panic(__FILE__, "dump_core: not idle", rmp->mp_fs_call);
-  rmp->mp_fs_call= PM_DUMPCORE;
-  r= notify(FS_PROC_NR);
-  if (r != OK) panic(__FILE__, "dump_core: unable to notify FS", r);
+  /* Write the memory map of all segments to begin the core file. */
+  if (write(fd, (char *) rmp->mp_seg, (unsigned) sizeof rmp->mp_seg)
+      != (unsigned) sizeof rmp->mp_seg) {
+	close(fd);
+	return;
+  }
 
-  /* Also perform most of the normal exit processing. Informing the parent
-   * has to wait until we know whether the coredump was successful or not.
-   */
-
-  proc_nr = (int) (rmp - mproc);	/* get process slot number */
-  proc_nr_e = rmp->mp_endpoint;
-
-  /* Remember a session leader's process group. */
-  procgrp = (rmp->mp_pid == mp->mp_procgrp) ? mp->mp_procgrp : 0;
-
-  /* If the exited process has a timer pending, kill it. */
-  if (rmp->mp_flags & ALARM_ON) set_alarm(proc_nr_e, (unsigned) 0);
-
-  /* Do accounting: fetch usage times and accumulate at parent. */
-  if((r=sys_times(proc_nr_e, &user_time, &sys_time, NULL)) != OK)
-  	panic(__FILE__,"dump_core: sys_times failed", r);
-
-  p_mp = &mproc[rmp->mp_parent];			/* process' parent */
-  p_mp->mp_child_utime += user_time + rmp->mp_child_utime; /* add user time */
-  p_mp->mp_child_stime += sys_time + rmp->mp_child_stime; /* add system time */
-
-  /* Tell the kernel the process is no longer runnable to prevent it from 
-   * being scheduled in between the following steps. Then tell FS that it 
-   * the process has exited and finally, clean up the process at the kernel.
-   * This order is important so that FS can tell drivers to cancel requests
-   * such as copying to/ from the exiting process, before it is gone.
-   */
-  sys_nice(proc_nr_e, PRIO_STOP);	/* stop the process */
-
-  if(proc_nr_e != FS_PROC_NR)		/* if it is not FS that is exiting.. */
-  {
-	if (rmp->mp_flags & PRIV_PROC)
-	{
-		/* destroy system processes without waiting for FS */
-		if((r= sys_exit(rmp->mp_endpoint)) != OK)
-			panic(__FILE__, "dump_core: sys_exit failed", r);
-
-		/* Just send a SIGCHLD. Dealing with waidpid is too complicated
-		 * here.
-		 */
-		p_mp = &mproc[rmp->mp_parent];		/* process' parent */
-		sig_proc(p_mp, SIGCHLD);
-
-		/* Zombify to avoid calling sys_endksig */
-		rmp->mp_flags |= ZOMBIE;
+  /* Write out the whole kernel process table entry to get the regs. */
+  trace_off = 0;
+  while (sys_trace(T_GETUSER, slot, trace_off, &trace_data) == OK) {
+	if (write(fd, (char *) &trace_data, (unsigned) sizeof (long))
+	    != (unsigned) sizeof (long)) {
+		close(fd);
+		return;
 	}
-  }
-  else
-  {
-	printf("PM: FS died\n");
-	return SUSPEND;
+	trace_off += sizeof (long);
   }
 
-  /* Pending reply messages for the dead process cannot be delivered. */
-  rmp->mp_flags &= ~REPLY;
-
-  /* Keep the process around until FS is finished with it. */
-  
-  /* If the process has children, disinherit them.  INIT is the new parent. */
-  for (rmp = &mproc[0]; rmp < &mproc[NR_PROCS]; rmp++) {
-	if (rmp->mp_flags & IN_USE && rmp->mp_parent == proc_nr) {
-		/* 'rmp' now points to a child to be disinherited. */
-		rmp->mp_parent = INIT_PROC_NR;
-		parent_waiting = mproc[INIT_PROC_NR].mp_flags & WAITING;
-		if (parent_waiting && (rmp->mp_flags & ZOMBIE))
-		{
-			tell_parent(rmp);
-			real_cleanup(rmp);
-		}
-	}
+  /* Loop through segments and write the segments themselves out. */
+  for (seg = 0; seg < NR_LOCAL_SEGS; seg++) {
+	rw_seg(1, fd, slot, seg,
+		(phys_bytes) rmp->mp_seg[seg].mem_len << CLICK_SHIFT);
   }
-
-  /* Send a hangup to the process' process group if it was a session leader. */
-  if (procgrp != 0) check_sig(-procgrp, SIGHUP);
-
-  return SUSPEND;
+  close(fd);
 }
+
